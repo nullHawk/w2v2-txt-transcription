@@ -61,13 +61,3 @@ This repository contains a Python script that transcribes audio files using a w2
 - **`checkpoint_path`**: Path to the pre-trained model checkpoint file.
 - **`audio_directory`**: Directory to monitor for new audio files.
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-
-- [Fairseq](https://fairseq.readthedocs.io/en/latest/) for providing the audio model.
-- [PyTorch](https://pytorch.org/) for the underlying deep learning framework.
-- [torchaudio](https://pytorch.org/audio/stable/index.html) for audio processing tools.
-- [watchdog](https://pypi.org/project/watchdog/) for directory monitoring functionality.
