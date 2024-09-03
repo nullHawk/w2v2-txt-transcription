@@ -5,101 +5,111 @@ from fairseq import checkpoint_utils
 from fairseq.data.dictionary import Dictionary
 import torchaudio
 from omegaconf import OmegaConf
+from jiwer import wer, cer
+import librosa
 import os
 
+def split_audio(audio_path, max_duration=30):
+    waveform, sample_rate = torchaudio.load(audio_path)
+    total_duration = waveform.size(1) / sample_rate
+    
+    if total_duration <= max_duration:
+        return [(audio_path, waveform)]
+    
+    chunks = []
+    chunk_size = int(max_duration * sample_rate)
+    
+    for start in range(0, waveform.size(1), chunk_size):
+        end = min(start + chunk_size, waveform.size(1))
+        chunk_waveform = waveform[:, start:end]
+        chunk_path = f"{audio_path}_chunk_{start // chunk_size}.wav"
+        torchaudio.save(chunk_path, chunk_waveform, sample_rate)
+        chunks.append((chunk_path, chunk_waveform))
+    
+    return chunks
+
+def preprocess_audio(waveform, sample_rate, task):
+    assert sample_rate == task.cfg.sample_rate, "Sample rate must match the task sample rate."
+    waveform = waveform - waveform.mean()
+    waveform = waveform / waveform.abs().max()
+    return waveform
+
+def ctc_decode(logits, dictionary):
+    tokens = logits.argmax(dim=-1).squeeze().tolist()
+    if isinstance(tokens, int):
+        tokens = [tokens]
+    decoded = []
+    prev_token = None
+    for token in tokens:
+        if token != prev_token and token != dictionary.pad():
+            decoded.append(token)
+        prev_token = token
+    return decoded
+
+def tokens_to_string(tokens, dictionary):
+    return post_process(dictionary.string(tokens), symbol='letter')
+
 def transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True):
-    # Load the configuration
     config = OmegaConf.load(config_path)
-
-    # Initialize the task
     task = AudioFinetuningTask.setup_task(config.task)
-
-    # Load the model checkpoint
-    model, cfg, task = checkpoint_utils.load_model_ensemble_and_task([checkpoint_path])
+    model, _, _ = checkpoint_utils.load_model_ensemble_and_task([checkpoint_path])
     model = model[0]
     model.eval()
 
     if use_cuda and torch.cuda.is_available():
         model = model.cuda()
 
-    # Load the dictionary
     grapheme_dict = Dictionary.load(dictionary_path)
-    print(f"Number of graphemes in the dictionary: {len(grapheme_dict)}")
-    print(f"Grapheme dictionary: {grapheme_dict.symbols}")
+    
+    audio_chunks = split_audio(audio_path)
+    transcriptions = []
 
-    # Function to load and preprocess audio file
-    def preprocess_audio(audio_path, task):
-        waveform, sample_rate = torchaudio.load(audio_path)
-        assert sample_rate == task.cfg.sample_rate, "Sample rate must match the task sample rate."
-        # Normalize waveform
-        waveform = waveform - waveform.mean()
-        waveform = waveform / waveform.abs().max()
-        return waveform
+    for chunk_path, waveform in audio_chunks:
+        waveform = preprocess_audio(waveform, torchaudio.info(chunk_path).sample_rate, task)
+        
+        if use_cuda and torch.cuda.is_available():
+            waveform = waveform.cuda()
 
-    # Function to decode CTC outputs
-    def ctc_decode(logits, dictionary):
-        tokens = logits.argmax(dim=-1).squeeze().tolist()
-        # Collapse repeated tokens and remove blanks (represented by 0)
-        if isinstance(tokens, int):
-            tokens = [tokens]
-        decoded = []
-        prev_token = None
-        for token in tokens:
-            if token != prev_token and token != dictionary.pad():
-                decoded.append(token)
-            prev_token = token
-        return decoded
+        net_input = {
+            'source': waveform,
+            'padding_mask': None,
+            'src_lengths': torch.tensor([waveform.size(1)])
+        }
 
-    # Function to convert token indices to strings
-    def tokens_to_string(tokens, dictionary):
-        return post_process(dictionary.string(tokens), symbol='letter')
+        if use_cuda and torch.cuda.is_available():
+            net_input['src_lengths'] = net_input['src_lengths'].cuda()
 
-    # Preprocess the audio file
-    waveform = preprocess_audio(audio_path, task)
+        with torch.no_grad():
+            net_output = model(**net_input)
+            grapheme_lprobs = model.get_normalized_probs(net_output, log_probs=True)
 
-    if use_cuda and torch.cuda.is_available():
-        waveform = waveform.cuda()
+        grapheme_preds = ctc_decode(grapheme_lprobs, grapheme_dict)
+        grapheme_transcription = tokens_to_string(grapheme_preds, grapheme_dict)
+        transcriptions.append(grapheme_transcription)
 
-    # Prepare input sample
-    net_input = {
-        'source': waveform,
-        'padding_mask': None,
-    }
+        if chunk_path != audio_path:  # Cleanup chunk files
+            os.remove(chunk_path)
 
-    # Add input lengths for inference
-    net_input['src_lengths'] = torch.tensor([waveform.size(1)])
+    final_transcription = " ".join(transcriptions)
 
-    if use_cuda and torch.cuda.is_available():
-        net_input['src_lengths'] = net_input['src_lengths'].cuda()
+    output_dir = "transcripts/"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"{os.path.basename(audio_path)}_transcription.txt")
 
-    # Perform inference
-    with torch.no_grad():
-        net_output = model(**net_input)
-        grapheme_lprobs = model.get_normalized_probs(net_output, log_probs=True)
-
-    # Get the predicted tokens for graphemes
-    grapheme_preds = ctc_decode(grapheme_lprobs, grapheme_dict)
-    grapheme_transcription = tokens_to_string(grapheme_preds, grapheme_dict)
-
-    # Save the transcription to a file
-    os.makedirs(f'inference_result/our_dataset', exist_ok=True)
-    output_prefix = os.path.splitext(os.path.basename(audio_path))[0]
-    output_path = f'inference_result/our_dataset/{output_prefix}_transcription.txt'
     with open(output_path, 'w') as f:
-        f.write(grapheme_transcription + '\n')
+        f.write(final_transcription + '\n')
 
-    print(f"Transcription saved to: {output_path}")
+    print(f"Transcription for {audio_path}:")
+    print(final_transcription)
 
     return output_path
 
 def main():
-    # Define input paths and parameters
     config_path = '/raid/ganesh/pdadiga/rishabh/asr/IndicWav2Vec/finetune_configs/ai4b_xlsr.yaml'
     dictionary_path = '/raid/ganesh/pdadiga/rishabh/asr/IndicWav2Vec/dataset/hindi_g/dict.ltr.txt'
     checkpoint_path = '/raid/ganesh/pdadiga/rishabh/asr/IndicWav2Vec/bgpt/models/test_hindi/checkpoint_best.pt'
-    audio_path = '/path/to/your/audio/file.mp3'  # Update this path with your actual audio file
+    audio_path = '/path/to/your/audio/file.wav'
 
-    # Perform transcription
     transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True)
 
 if __name__ == '__main__':
