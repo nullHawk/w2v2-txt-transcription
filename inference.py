@@ -9,6 +9,7 @@ from jiwer import wer, cer
 import librosa
 import os
 import time
+import sys
 
 def split_audio(audio_path, max_duration=30):
     waveform, sample_rate = torchaudio.load(audio_path)
@@ -111,7 +112,9 @@ def main():
     config_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/config/ai4b_xlsr.yaml'
     dictionary_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/config/dic.ltr.txt'
     checkpoint_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/models/checkpoint_best.pt'
-    audio_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/audio/1.wav'
+    
+    # Get audio path from command-line argument or use default
+    audio_path = sys.argv[1] if len(sys.argv) > 1 else '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/audio/2.mp3'
 
     transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True)
     end_time = time.time()
