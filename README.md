@@ -1,101 +1,73 @@
-# W2V2-txt-interference-pipeline
+# W2V2-txt-inference-pipeline
 
 This repository contains a Python script that transcribes audio files using a w2v2 pretrained model. The script splits the audio into chunks, processes each chunk, and then decodes the transcriptions using a CTC-based model. The final transcription is saved as a text file.
 
-## Table of Contents
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Script Overview](#script-overview)
-- [Arguments](#arguments)
-- [Output](#output)
-- [License](#license)
+## Features
+
+- **Automatic Audio Chunking**: Splits audio files into chunks for more efficient transcription.
+- **Model Caching**: Loads the model and dictionary once at startup to reduce latency.
+- **Real-Time Directory Monitoring**: Uses `watchdog` to monitor a directory and transcribe new audio files as they are added.
+- **Time Tracking**: Measures and prints the time taken for each transcription.
 
 ## Requirements
 
-To run this script, you need the following Python packages:
+- Python 3.7+
+- PyTorch
+- Fairseq
+- torchaudio
+- omegaconf
+- watchdog
 
-- `torch`
-- `fairseq`
-- `torchaudio`
-- `omegaconf`
-- `jiwer`
-- `librosa`
+## Setup
 
-You can install these packages using pip:
+1. **Clone the Repository**:
+    ```bash
+    git clone https://github.com/nullHawk/w2v2-txt-transcription.git
+    cd w2v2-txt-transcription
+    ```
 
-```bash
-pip install torch fairseq torchaudio omegaconf jiwer librosa
-```
+2. **Create a Virtual Environment** (optional but recommended):
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+    ```
 
-## Installation
+3. **Install Dependencies**:
+    ```bash
+    pip install torch fairseq torchaudio omegaconf watchdog
+    ```
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/nullHawk/w2v2-txt-transcription.git
-   cd w2v2-txt-transcription
-   ```
-
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Ensure you have the necessary model checkpoints and configuration files. Modify the paths in the script or command accordingly.
+4. **Prepare Configuration Files**:
+    - Place your Fairseq configuration file (`ai4b_xlsr.yaml`), dictionary file (`dic.ltr.txt`), and model checkpoint file (`checkpoint_best.pt`) in the appropriate paths.
+    - Update the paths in the script to match your file locations.
 
 ## Usage
 
-To transcribe an audio file, run the following command:
+1. **Update the Script**:
+    - Ensure the paths for `config_path`, `dictionary_path`, and `checkpoint_path` in the `main()` function of the `transcription.py` script are correctly set.
 
-```bash
-python transcribe.py /path/to/your/audio/file.mp3
-```
+2. **Run the Script**:
+    ```bash
+    python transcription.py
+    ```
 
-If no audio file path is provided, the script will use a default path defined in the `main()` function.
+3. **Add Audio Files**:
+    - Place audio files in the directory specified by `audio_directory` in the script. The script will automatically detect new files and process them.
 
-## Script Overview
+## Configuration
 
-### `split_audio(audio_path, max_duration=30)`
+- **`config_path`**: Path to the Fairseq configuration file.
+- **`dictionary_path`**: Path to the Fairseq dictionary file.
+- **`checkpoint_path`**: Path to the pre-trained model checkpoint file.
+- **`audio_directory`**: Directory to monitor for new audio files.
 
-Splits the audio file into chunks if it exceeds the `max_duration` in seconds.
+## License
 
-### `preprocess_audio(waveform, sample_rate, task)`
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-Normalizes the audio waveform and ensures the sample rate matches the task's requirements.
+## Acknowledgements
 
-### `ctc_decode(logits, dictionary)`
-
-Decodes the model's output logits to token sequences using the CTC algorithm.
-
-### `tokens_to_string(tokens, dictionary)`
-
-Converts the token sequences into human-readable strings.
-
-### `transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True)`
-
-Main function that handles the loading of the model, processing of the audio, and transcription.
-
-### `main()`
-
-Handles command-line arguments and initiates the transcription process.
-
-## Arguments
-
-- **config_path**: Path to the model configuration file (`.yaml`).
-- **checkpoint_path**: Path to the pretrained model checkpoint file (`.pt`).
-- **dictionary_path**: Path to the dictionary file (`dic.ltr.txt`).
-- **audio_path**: Path to the audio file to be transcribed.
-- **use_cuda**: (Optional) Set to `True` to use GPU for transcription, defaults to `True`.
-
-## Output
-
-The script generates a transcription text file for the provided audio file and saves it in the `transcripts/` directory.
-
-Example output file name:
-
-```
-transcripts/audio_file_name_transcription.txt
-```
-
-The console will also display the transcription and the time taken for the process.
-
+- [Fairseq](https://fairseq.readthedocs.io/en/latest/) for providing the audio model.
+- [PyTorch](https://pytorch.org/) for the underlying deep learning framework.
+- [torchaudio](https://pytorch.org/audio/stable/index.html) for audio processing tools.
+- [watchdog](https://pypi.org/project/watchdog/) for directory monitoring functionality.

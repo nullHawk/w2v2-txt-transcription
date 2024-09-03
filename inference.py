@@ -5,13 +5,34 @@ from fairseq import checkpoint_utils
 from fairseq.data.dictionary import Dictionary
 import torchaudio
 from omegaconf import OmegaConf
-from jiwer import wer, cer
-import librosa
-import os
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 import time
-import sys
+import os
 
-def split_audio(audio_path, max_duration=30):
+transcribed_files = set()
+model_cache = None
+
+def load_model_and_dict(config_path, checkpoint_path, dictionary_path, use_cuda=True):
+    global model_cache
+    if model_cache is None:
+        config = OmegaConf.load(config_path)
+        task = AudioFinetuningTask.setup_task(config.task)
+        model, _, _ = checkpoint_utils.load_model_ensemble_and_task([checkpoint_path])
+        model = model[0]
+        model.eval()
+        
+        if use_cuda and torch.cuda.is_available():
+            model = model.cuda()
+        
+        grapheme_dict = Dictionary.load(dictionary_path)
+        model_cache = (model, task, grapheme_dict)
+        
+    return model_cache
+
+def split_audio(audio_path, max_duration=30, chunks_dir="chunks"):
+    os.makedirs(chunks_dir, exist_ok=True)
+
     waveform, sample_rate = torchaudio.load(audio_path)
     total_duration = waveform.size(1) / sample_rate
     
@@ -20,11 +41,12 @@ def split_audio(audio_path, max_duration=30):
     
     chunks = []
     chunk_size = int(max_duration * sample_rate)
-    
+    base_name = os.path.splitext(os.path.basename(audio_path))[0]
+
     for start in range(0, waveform.size(1), chunk_size):
         end = min(start + chunk_size, waveform.size(1))
         chunk_waveform = waveform[:, start:end]
-        chunk_path = f"{audio_path}_chunk_{start // chunk_size}.wav"
+        chunk_path = os.path.join(chunks_dir, f"{base_name}_chunk_{start // chunk_size}.wav")
         torchaudio.save(chunk_path, chunk_waveform, sample_rate)
         chunks.append((chunk_path, chunk_waveform))
     
@@ -53,16 +75,9 @@ def tokens_to_string(tokens, dictionary):
     return post_process(dictionary.string(tokens), symbol='letter')
 
 def transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True):
-    config = OmegaConf.load(config_path)
-    task = AudioFinetuningTask.setup_task(config.task)
-    model, _, _ = checkpoint_utils.load_model_ensemble_and_task([checkpoint_path])
-    model = model[0]
-    model.eval()
-
-    if use_cuda and torch.cuda.is_available():
-        model = model.cuda()
-
-    grapheme_dict = Dictionary.load(dictionary_path)
+    start_time = time.time()  # Start time tracking
+    
+    model, task, grapheme_dict = load_model_and_dict(config_path, checkpoint_path, dictionary_path, use_cuda)
     
     audio_chunks = split_audio(audio_path)
     transcriptions = []
@@ -102,23 +117,62 @@ def transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, 
     with open(output_path, 'w') as f:
         f.write(final_transcription + '\n')
 
-    print(f"Transcription for {audio_path}:")
+    end_time = time.time()  # End time tracking
+    elapsed_time = end_time - start_time  # Calculate elapsed time
+
+    print(f"Transcription result for {audio_path}:")
     print(final_transcription)
+    print(f"Transcription for {audio_path} took {elapsed_time:.2f} seconds.")
 
     return output_path
 
+class AudioHandler(FileSystemEventHandler):
+    def __init__(self, config_path, checkpoint_path, dictionary_path, use_cuda=True):
+        self.config_path = config_path
+        self.checkpoint_path = checkpoint_path
+        self.dictionary_path = dictionary_path
+        self.use_cuda = use_cuda
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+
+        audio_path = event.src_path
+        if audio_path in transcribed_files:
+            print(f"File {audio_path} already transcribed.")
+            return
+
+        print(f"New audio file detected: {audio_path}")
+        transcribe_audio(self.config_path, self.checkpoint_path, self.dictionary_path, audio_path, self.use_cuda)
+        transcribed_files.add(audio_path)
+
 def main():
-    start_time = time.time()
     config_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/config/ai4b_xlsr.yaml'
     dictionary_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/config/dic.ltr.txt'
     checkpoint_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/models/checkpoint_best.pt'
     
-    # Get audio path from command-line argument or use default
-    audio_path = sys.argv[1] if len(sys.argv) > 1 else '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/audio/2.mp3'
+    # Initialize the handler
+    event_handler = AudioHandler(config_path, checkpoint_path, dictionary_path)
 
-    transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True)
-    end_time = time.time()
-    print("Time taken: ", end_time - start_time)
+    # Set the directory to watch
+    audio_directory = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/input/'
+
+    # Initialize the observer
+    observer = Observer()
+    observer.schedule(event_handler, audio_directory, recursive=False)
+    load_model_and_dict(config_path, checkpoint_path, dictionary_path, True)
+    print(f"Monitoring directory: {audio_directory}")
+    
+    # Start the observer
+    observer.start()
+    
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    
+    observer.join()
 
 if __name__ == '__main__':
     main()
