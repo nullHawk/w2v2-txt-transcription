@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 from jiwer import wer, cer
 import librosa
 import os
+import time
 
 def split_audio(audio_path, max_duration=30):
     waveform, sample_rate = torchaudio.load(audio_path)
@@ -29,7 +30,8 @@ def split_audio(audio_path, max_duration=30):
     return chunks
 
 def preprocess_audio(waveform, sample_rate, task):
-    assert sample_rate == task.cfg.sample_rate, "Sample rate must match the task sample rate."
+    task_sample_rate = getattr(task.cfg, 'sample_rate', 16000)  # Default to 16000 Hz if not in config
+    assert sample_rate == task_sample_rate, "Sample rate must match the task sample rate."
     waveform = waveform - waveform.mean()
     waveform = waveform / waveform.abs().max()
     return waveform
@@ -105,12 +107,15 @@ def transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, 
     return output_path
 
 def main():
-    config_path = '/raid/ganesh/pdadiga/rishabh/asr/IndicWav2Vec/finetune_configs/ai4b_xlsr.yaml'
-    dictionary_path = '/raid/ganesh/pdadiga/rishabh/asr/IndicWav2Vec/dataset/hindi_g/dict.ltr.txt'
-    checkpoint_path = '/raid/ganesh/pdadiga/rishabh/asr/IndicWav2Vec/bgpt/models/test_hindi/checkpoint_best.pt'
-    audio_path = '/path/to/your/audio/file.wav'
+    start_time = time.time()
+    config_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/config/ai4b_xlsr.yaml'
+    dictionary_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/config/dic.ltr.txt'
+    checkpoint_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/models/checkpoint_best.pt'
+    audio_path = '/raid/ganesh/pdadiga/suryansh/w2v2-txt-transcription/audio/1.wav'
 
     transcribe_audio(config_path, checkpoint_path, dictionary_path, audio_path, use_cuda=True)
+    end_time = time.time()
+    print("Time taken: ", end_time - start_time)
 
 if __name__ == '__main__':
     main()
